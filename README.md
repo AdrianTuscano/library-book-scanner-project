@@ -1,7 +1,7 @@
 ## Project Goal
-The goal of this project is to shelve books more efficently with the use of OCR to help libraries when there aren't shelvers available 
+The goal of this project is to shelve books more efficently with the use of OCR to help libraries when there aren't shelvers available, allowing people with worse backs to shelve books without physical strain in the kids section. 
 
-
+The software part of that project has these goals: 
 1. Capture live video feed of book spines on shelves
 2. Detect book titles, guess, and return metadata
 3. Overlay the title with author information
