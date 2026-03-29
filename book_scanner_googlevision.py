@@ -16,9 +16,9 @@ try:
 except ImportError:
     GPIO_AVAILABLE = False
 
-CREDENTIALS_PATH = "/home/adrian-tuscano/Desktop/adriant-computer-vision-pp-227e26cc3bdb.json"
-if os.path.exists(CREDENTIALS_PATH):
-    os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = CREDENTIALS_PATH
+CREDENTIALS_PATH = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS', '')
+if not CREDENTIALS_PATH:
+    CREDENTIALS_PATH = os.environ.get('GOOGLE_VISION_CREDENTIALS', '')
 
 SERVO_PIN = 14
 SERVO_FREQ = 50
