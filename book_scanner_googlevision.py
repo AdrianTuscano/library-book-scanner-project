@@ -22,6 +22,8 @@ if os.path.exists(CREDENTIALS_PATH):
 
 SERVO_PIN = 14
 SERVO_FREQ = 50
+SERVO_FWD = 8.5
+SERVO_REV = 6.5
 
 class ServoController:
 
@@ -38,21 +40,22 @@ class ServoController:
 
     def forward(self):
         if self.pwm:
-            self.pwm.ChangeDutyCycle(10)
+            self.pwm.ChangeDutyCycle(SERVO_FWD)
             self.running = True
 
     def reverse(self):
         if self.pwm:
-            self.pwm.ChangeDutyCycle(5)
+            self.pwm.ChangeDutyCycle(SERVO_REV)
             self.running = True
 
     def stop(self):
         if self.pwm:
-            self.pwm.ChangeDutyCycle(7.5)
+            self.pwm.ChangeDutyCycle(0)
             self.running = False
 
     def cleanup(self):
         if self.pwm:
+            self.pwm.ChangeDutyCycle(0)
             self.pwm.stop()
         if GPIO_AVAILABLE:
             GPIO.cleanup(self.pin)
