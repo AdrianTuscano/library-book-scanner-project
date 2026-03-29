@@ -20,25 +20,40 @@ CREDENTIALS_PATH = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS', '')
 if not CREDENTIALS_PATH:
     CREDENTIALS_PATH = os.environ.get('GOOGLE_VISION_CREDENTIALS', '')
 
-SERVO_PIN = 14
+SERVO_PIN_1 = 14
+SERVO_PIN_2 = 2
 SERVO_FWD = 2000
 SERVO_REV = 1000
 SERVO_STOP = 0
 
-VIDEO_WIDTH = 640
-VIDEO_HEIGHT = 360
+VIDEO_WIDTH = 480
+VIDEO_HEIGHT = 270
+
+_pi_instance = None
+
+
+def get_pi():
+    global _pi_instance
+    if _pi_instance is None and PIGPIO_AVAILABLE:
+        _pi_instance = pigpio.pi()
+        if not _pi_instance.connected:
+            _pi_instance = None
+    return _pi_instance
+
+
+def cleanup_pi():
+    global _pi_instance
+    if _pi_instance:
+        _pi_instance.stop()
+        _pi_instance = None
 
 
 class ServoController:
 
-    def __init__(self, pin=SERVO_PIN):
+    def __init__(self, pin):
         self.pin = pin
-        self.pi = None
+        self.pi = get_pi()
         self.running = False
-        if PIGPIO_AVAILABLE:
-            self.pi = pigpio.pi()
-            if not self.pi.connected:
-                self.pi = None
 
     def forward(self):
         if self.pi:
@@ -58,7 +73,6 @@ class ServoController:
     def cleanup(self):
         if self.pi:
             self.pi.set_servo_pulsewidth(self.pin, 0)
-            self.pi.stop()
 
 
 class BookScanner:
@@ -218,7 +232,8 @@ class BookScannerGUI:
             self.root.quit()
             return
 
-        self.servo = ServoController()
+        self.servo1 = ServoController(SERVO_PIN_1)
+        self.servo2 = ServoController(SERVO_PIN_2)
 
         self.cap = cv2.VideoCapture(0)
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
@@ -244,64 +259,80 @@ class BookScannerGUI:
         video_frame = tk.Frame(top_frame, bg='black', relief=tk.SUNKEN, bd=2)
         video_frame.pack(side=tk.LEFT)
 
-        self.video_label = tk.Label(video_frame, bg='black', width=VIDEO_WIDTH, height=VIDEO_HEIGHT)
+        self.video_label = tk.Label(video_frame, bg='black')
         self.video_label.pack()
 
         controls_frame = tk.Frame(top_frame, bg='#1e1e1e', relief=tk.SUNKEN, bd=2)
-        controls_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=(5, 0))
+        controls_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(5, 0))
 
-        self.scan_button = tk.Button(controls_frame, text="SCAN",
+        top_controls = tk.Frame(controls_frame, bg='#1e1e1e')
+        top_controls.pack(fill=tk.X, pady=5)
+
+        self.scan_button = tk.Button(top_controls, text="SCAN",
                                      command=self.scan_books,
-                                     font=('Arial', 14, 'bold'),
-                                     bg='#4CAF50', fg='white',
-                                     width=10, height=2,
-                                     relief=tk.RAISED, bd=2)
-        self.scan_button.pack(pady=10, padx=10)
-
-        servo_label = tk.Label(controls_frame, text="Servo",
-                              font=('Arial', 10),
-                              bg='#1e1e1e', fg='white')
-        servo_label.pack(pady=(10, 5))
-
-        servo_buttons = tk.Frame(controls_frame, bg='#1e1e1e')
-        servo_buttons.pack()
-
-        self.reverse_button = tk.Button(servo_buttons, text="<",
-                                        command=self.servo_reverse,
-                                        font=('Arial', 12, 'bold'),
-                                        bg='#2196F3', fg='white',
-                                        width=3, height=1,
-                                        relief=tk.RAISED, bd=2)
-        self.reverse_button.pack(side=tk.LEFT, padx=2)
-
-        self.stop_button = tk.Button(servo_buttons, text="||",
-                                     command=self.servo_stop,
                                      font=('Arial', 12, 'bold'),
-                                     bg='#FF9800', fg='white',
-                                     width=3, height=1,
+                                     bg='#4CAF50', fg='white',
+                                     width=8, height=1,
                                      relief=tk.RAISED, bd=2)
-        self.stop_button.pack(side=tk.LEFT, padx=2)
+        self.scan_button.pack(side=tk.LEFT, padx=10)
 
-        self.forward_button = tk.Button(servo_buttons, text=">",
-                                        command=self.servo_forward,
-                                        font=('Arial', 12, 'bold'),
-                                        bg='#2196F3', fg='white',
-                                        width=3, height=1,
-                                        relief=tk.RAISED, bd=2)
-        self.forward_button.pack(side=tk.LEFT, padx=2)
-
-        self.status_label = tk.Label(controls_frame, text="Ready",
+        self.status_label = tk.Label(top_controls, text="Ready",
                                      font=('Arial', 10),
                                      bg='#1e1e1e', fg='#4CAF50')
-        self.status_label.pack(pady=10)
+        self.status_label.pack(side=tk.LEFT, padx=10)
 
-        quit_button = tk.Button(controls_frame, text="QUIT",
+        quit_button = tk.Button(top_controls, text="QUIT",
                                command=self.quit_app,
-                               font=('Arial', 12),
+                               font=('Arial', 10),
                                bg='#f44336', fg='white',
-                               width=10, height=1,
+                               width=6,
                                relief=tk.RAISED, bd=2)
-        quit_button.pack(pady=10, padx=10)
+        quit_button.pack(side=tk.RIGHT, padx=10)
+
+        servos_frame = tk.Frame(controls_frame, bg='#1e1e1e')
+        servos_frame.pack(fill=tk.X, pady=10)
+
+        servo1_frame = tk.Frame(servos_frame, bg='#1e1e1e')
+        servo1_frame.pack(side=tk.LEFT, padx=20)
+
+        servo1_label = tk.Label(servo1_frame, text="Servo 1",
+                               font=('Arial', 9),
+                               bg='#1e1e1e', fg='white')
+        servo1_label.pack()
+
+        servo1_buttons = tk.Frame(servo1_frame, bg='#1e1e1e')
+        servo1_buttons.pack()
+
+        tk.Button(servo1_buttons, text="<", command=self.servo1_reverse,
+                 font=('Arial', 10, 'bold'), bg='#2196F3', fg='white',
+                 width=2, relief=tk.RAISED, bd=2).pack(side=tk.LEFT, padx=1)
+        tk.Button(servo1_buttons, text="||", command=self.servo1_stop,
+                 font=('Arial', 10, 'bold'), bg='#FF9800', fg='white',
+                 width=2, relief=tk.RAISED, bd=2).pack(side=tk.LEFT, padx=1)
+        tk.Button(servo1_buttons, text=">", command=self.servo1_forward,
+                 font=('Arial', 10, 'bold'), bg='#2196F3', fg='white',
+                 width=2, relief=tk.RAISED, bd=2).pack(side=tk.LEFT, padx=1)
+
+        servo2_frame = tk.Frame(servos_frame, bg='#1e1e1e')
+        servo2_frame.pack(side=tk.LEFT, padx=20)
+
+        servo2_label = tk.Label(servo2_frame, text="Servo 2",
+                               font=('Arial', 9),
+                               bg='#1e1e1e', fg='white')
+        servo2_label.pack()
+
+        servo2_buttons = tk.Frame(servo2_frame, bg='#1e1e1e')
+        servo2_buttons.pack()
+
+        tk.Button(servo2_buttons, text="<", command=self.servo2_reverse,
+                 font=('Arial', 10, 'bold'), bg='#9C27B0', fg='white',
+                 width=2, relief=tk.RAISED, bd=2).pack(side=tk.LEFT, padx=1)
+        tk.Button(servo2_buttons, text="||", command=self.servo2_stop,
+                 font=('Arial', 10, 'bold'), bg='#FF9800', fg='white',
+                 width=2, relief=tk.RAISED, bd=2).pack(side=tk.LEFT, padx=1)
+        tk.Button(servo2_buttons, text=">", command=self.servo2_forward,
+                 font=('Arial', 10, 'bold'), bg='#9C27B0', fg='white',
+                 width=2, relief=tk.RAISED, bd=2).pack(side=tk.LEFT, padx=1)
 
         bottom_frame = tk.Frame(self.root, bg='#1e1e1e', relief=tk.SUNKEN, bd=2)
         bottom_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=(0, 5))
@@ -310,35 +341,41 @@ class BookScannerGUI:
         results_header.pack(fill=tk.X)
 
         results_title = tk.Label(results_header, text="Detected Books",
-                                font=('Arial', 11, 'bold'),
+                                font=('Arial', 10, 'bold'),
                                 bg='#1e1e1e', fg='white')
-        results_title.pack(side=tk.LEFT, padx=10, pady=5)
+        results_title.pack(side=tk.LEFT, padx=10, pady=3)
 
         self.results_count = tk.Label(results_header, text="",
-                                      font=('Arial', 10),
+                                      font=('Arial', 9),
                                       bg='#1e1e1e', fg='#4CAF50')
-        self.results_count.pack(side=tk.RIGHT, padx=10, pady=5)
+        self.results_count.pack(side=tk.RIGHT, padx=10, pady=3)
 
         self.results_frame = tk.Frame(bottom_frame, bg='#1e1e1e')
-        self.results_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        self.results_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=3)
 
         self.no_results_label = tk.Label(self.results_frame,
                                          text="Press SCAN to detect books",
-                                         font=('Arial', 10),
+                                         font=('Arial', 9),
                                          bg='#1e1e1e', fg='#888888')
         self.no_results_label.pack(expand=True)
 
-    def servo_forward(self):
-        self.servo.forward()
-        self.status_label.config(text="FWD", fg='#2196F3')
+    def servo1_forward(self):
+        self.servo1.forward()
 
-    def servo_reverse(self):
-        self.servo.reverse()
-        self.status_label.config(text="REV", fg='#2196F3')
+    def servo1_reverse(self):
+        self.servo1.reverse()
 
-    def servo_stop(self):
-        self.servo.stop()
-        self.status_label.config(text="STOP", fg='#FF9800')
+    def servo1_stop(self):
+        self.servo1.stop()
+
+    def servo2_forward(self):
+        self.servo2.forward()
+
+    def servo2_reverse(self):
+        self.servo2.reverse()
+
+    def servo2_stop(self):
+        self.servo2.stop()
 
     def update_video(self):
         ret, frame = self.cap.read()
@@ -455,7 +492,9 @@ class BookScannerGUI:
         self.scan_button.config(state=tk.NORMAL, bg='#4CAF50')
 
     def quit_app(self):
-        self.servo.cleanup()
+        self.servo1.cleanup()
+        self.servo2.cleanup()
+        cleanup_pi()
         self.cap.release()
         self.root.destroy()
 
