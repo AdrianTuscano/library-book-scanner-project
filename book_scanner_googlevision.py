@@ -11,54 +11,54 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 try:
-    import RPi.GPIO as GPIO
-    GPIO_AVAILABLE = True
+    import pigpio
+    PIGPIO_AVAILABLE = True
 except ImportError:
-    GPIO_AVAILABLE = False
+    PIGPIO_AVAILABLE = False
 
 CREDENTIALS_PATH = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS', '')
 if not CREDENTIALS_PATH:
     CREDENTIALS_PATH = os.environ.get('GOOGLE_VISION_CREDENTIALS', '')
 
 SERVO_PIN = 14
-SERVO_FREQ = 50
-SERVO_FWD = 8.5
-SERVO_REV = 6.5
+SERVO_FWD = 1700
+SERVO_REV = 1300
+SERVO_STOP = 0
+
+VIDEO_WIDTH = 640
+VIDEO_HEIGHT = 360
+
 
 class ServoController:
 
     def __init__(self, pin=SERVO_PIN):
         self.pin = pin
-        self.pwm = None
+        self.pi = None
         self.running = False
-        if GPIO_AVAILABLE:
-            GPIO.setmode(GPIO.BCM)
-            GPIO.setwarnings(False)
-            GPIO.setup(self.pin, GPIO.OUT)
-            self.pwm = GPIO.PWM(self.pin, SERVO_FREQ)
-            self.pwm.start(0)
+        if PIGPIO_AVAILABLE:
+            self.pi = pigpio.pi()
+            if not self.pi.connected:
+                self.pi = None
 
     def forward(self):
-        if self.pwm:
-            self.pwm.ChangeDutyCycle(SERVO_FWD)
+        if self.pi:
+            self.pi.set_servo_pulsewidth(self.pin, SERVO_FWD)
             self.running = True
 
     def reverse(self):
-        if self.pwm:
-            self.pwm.ChangeDutyCycle(SERVO_REV)
+        if self.pi:
+            self.pi.set_servo_pulsewidth(self.pin, SERVO_REV)
             self.running = True
 
     def stop(self):
-        if self.pwm:
-            self.pwm.ChangeDutyCycle(0)
+        if self.pi:
+            self.pi.set_servo_pulsewidth(self.pin, SERVO_STOP)
             self.running = False
 
     def cleanup(self):
-        if self.pwm:
-            self.pwm.ChangeDutyCycle(0)
-            self.pwm.stop()
-        if GPIO_AVAILABLE:
-            GPIO.cleanup(self.pin)
+        if self.pi:
+            self.pi.set_servo_pulsewidth(self.pin, 0)
+            self.pi.stop()
 
 
 class BookScanner:
@@ -207,8 +207,9 @@ class BookScannerGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Book Scanner")
-        self.root.geometry("640x480")
+        self.root.geometry("800x480")
         self.root.configure(bg='#2b2b2b')
+        self.root.resizable(False, False)
 
         try:
             self.scanner = BookScanner()
@@ -237,122 +238,115 @@ class BookScannerGUI:
         self.root.protocol("WM_DELETE_WINDOW", self.quit_app)
 
     def setup_gui(self):
+        top_frame = tk.Frame(self.root, bg='#2b2b2b')
+        top_frame.pack(fill=tk.X, padx=5, pady=5)
 
-        title_label = tk.Label(self.root, text="Book Scanner",
-                              font=('Arial', 14, 'bold'),
-                              bg='#2b2b2b', fg='white')
-        title_label.pack(pady=2)
+        video_frame = tk.Frame(top_frame, bg='black', relief=tk.SUNKEN, bd=2)
+        video_frame.pack(side=tk.LEFT)
 
-        main_container = tk.Frame(self.root, bg='#2b2b2b')
-        main_container.pack(fill=tk.BOTH, expand=True, padx=5)
-
-        left_frame = tk.Frame(main_container, bg='#2b2b2b')
-        left_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
-        video_frame = tk.Frame(left_frame, bg='black', relief=tk.SUNKEN, bd=1)
-        video_frame.pack(pady=2)
-
-        self.video_label = tk.Label(video_frame, bg='black')
+        self.video_label = tk.Label(video_frame, bg='black', width=VIDEO_WIDTH, height=VIDEO_HEIGHT)
         self.video_label.pack()
 
-        right_frame = tk.Frame(main_container, bg='#1e1e1e', relief=tk.SUNKEN, bd=1)
-        right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, padx=(5, 0))
-        right_frame.config(width=200)
+        controls_frame = tk.Frame(top_frame, bg='#1e1e1e', relief=tk.SUNKEN, bd=2)
+        controls_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=(5, 0))
 
-        results_title = tk.Label(right_frame, text="Detected Books",
-                                font=('Arial', 10, 'bold'),
-                                bg='#1e1e1e', fg='white')
-        results_title.pack(pady=5)
-
-        self.results_frame = tk.Frame(right_frame, bg='#1e1e1e')
-        self.results_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-
-        self.no_results_label = tk.Label(self.results_frame,
-                                         text="Press SCAN\nto start",
-                                         font=('Arial', 9),
-                                         bg='#1e1e1e', fg='#888888')
-        self.no_results_label.pack(expand=True)
-
-        bottom_frame = tk.Frame(self.root, bg='#2b2b2b')
-        bottom_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=5)
-
-        button_container = tk.Frame(bottom_frame, bg='#2b2b2b')
-        button_container.pack()
-
-        self.scan_button = tk.Button(button_container, text="SCAN",
+        self.scan_button = tk.Button(controls_frame, text="SCAN",
                                      command=self.scan_books,
-                                     font=('Arial', 10, 'bold'),
+                                     font=('Arial', 14, 'bold'),
                                      bg='#4CAF50', fg='white',
-                                     padx=15, pady=5,
+                                     width=10, height=2,
                                      relief=tk.RAISED, bd=2)
-        self.scan_button.pack(side=tk.LEFT, padx=5)
+        self.scan_button.pack(pady=10, padx=10)
 
-        servo_frame = tk.Frame(button_container, bg='#2b2b2b')
-        servo_frame.pack(side=tk.LEFT, padx=10)
+        servo_label = tk.Label(controls_frame, text="Servo",
+                              font=('Arial', 10),
+                              bg='#1e1e1e', fg='white')
+        servo_label.pack(pady=(10, 5))
 
-        servo_buttons = tk.Frame(servo_frame, bg='#2b2b2b')
+        servo_buttons = tk.Frame(controls_frame, bg='#1e1e1e')
         servo_buttons.pack()
 
         self.reverse_button = tk.Button(servo_buttons, text="<",
                                         command=self.servo_reverse,
-                                        font=('Arial', 10, 'bold'),
+                                        font=('Arial', 12, 'bold'),
                                         bg='#2196F3', fg='white',
-                                        padx=8, pady=3,
+                                        width=3, height=1,
                                         relief=tk.RAISED, bd=2)
-        self.reverse_button.pack(side=tk.LEFT, padx=1)
+        self.reverse_button.pack(side=tk.LEFT, padx=2)
 
         self.stop_button = tk.Button(servo_buttons, text="||",
                                      command=self.servo_stop,
-                                     font=('Arial', 10, 'bold'),
+                                     font=('Arial', 12, 'bold'),
                                      bg='#FF9800', fg='white',
-                                     padx=8, pady=3,
+                                     width=3, height=1,
                                      relief=tk.RAISED, bd=2)
-        self.stop_button.pack(side=tk.LEFT, padx=1)
+        self.stop_button.pack(side=tk.LEFT, padx=2)
 
         self.forward_button = tk.Button(servo_buttons, text=">",
                                         command=self.servo_forward,
-                                        font=('Arial', 10, 'bold'),
+                                        font=('Arial', 12, 'bold'),
                                         bg='#2196F3', fg='white',
-                                        padx=8, pady=3,
+                                        width=3, height=1,
                                         relief=tk.RAISED, bd=2)
-        self.forward_button.pack(side=tk.LEFT, padx=1)
+        self.forward_button.pack(side=tk.LEFT, padx=2)
 
-        quit_button = tk.Button(button_container, text="QUIT",
+        self.status_label = tk.Label(controls_frame, text="Ready",
+                                     font=('Arial', 10),
+                                     bg='#1e1e1e', fg='#4CAF50')
+        self.status_label.pack(pady=10)
+
+        quit_button = tk.Button(controls_frame, text="QUIT",
                                command=self.quit_app,
-                               font=('Arial', 10),
+                               font=('Arial', 12),
                                bg='#f44336', fg='white',
-                               padx=15, pady=5,
+                               width=10, height=1,
                                relief=tk.RAISED, bd=2)
-        quit_button.pack(side=tk.LEFT, padx=5)
+        quit_button.pack(pady=10, padx=10)
 
-        self.status_label = tk.Label(bottom_frame, text="Ready",
-                                     font=('Arial', 9),
-                                     bg='#2b2b2b', fg='#4CAF50')
-        self.status_label.pack(pady=2)
+        bottom_frame = tk.Frame(self.root, bg='#1e1e1e', relief=tk.SUNKEN, bd=2)
+        bottom_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=(0, 5))
+
+        results_header = tk.Frame(bottom_frame, bg='#1e1e1e')
+        results_header.pack(fill=tk.X)
+
+        results_title = tk.Label(results_header, text="Detected Books",
+                                font=('Arial', 11, 'bold'),
+                                bg='#1e1e1e', fg='white')
+        results_title.pack(side=tk.LEFT, padx=10, pady=5)
+
+        self.results_count = tk.Label(results_header, text="",
+                                      font=('Arial', 10),
+                                      bg='#1e1e1e', fg='#4CAF50')
+        self.results_count.pack(side=tk.RIGHT, padx=10, pady=5)
+
+        self.results_frame = tk.Frame(bottom_frame, bg='#1e1e1e')
+        self.results_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        self.no_results_label = tk.Label(self.results_frame,
+                                         text="Press SCAN to detect books",
+                                         font=('Arial', 10),
+                                         bg='#1e1e1e', fg='#888888')
+        self.no_results_label.pack(expand=True)
 
     def servo_forward(self):
         self.servo.forward()
-        self.status_label.config(text="Servo: FWD", fg='#2196F3')
+        self.status_label.config(text="FWD", fg='#2196F3')
 
     def servo_reverse(self):
         self.servo.reverse()
-        self.status_label.config(text="Servo: REV", fg='#2196F3')
+        self.status_label.config(text="REV", fg='#2196F3')
 
     def servo_stop(self):
         self.servo.stop()
-        self.status_label.config(text="Servo: STOP", fg='#FF9800')
-    
+        self.status_label.config(text="STOP", fg='#FF9800')
+
     def update_video(self):
         ret, frame = self.cap.read()
         if ret:
             self.current_frame = frame
             if not self.scanning:
                 frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                height, width = frame_rgb.shape[:2]
-                max_width = 380
-                scale = max_width / width
-                frame_rgb = cv2.resize(frame_rgb,
-                                      (int(width * scale), int(height * scale)))
+                frame_rgb = cv2.resize(frame_rgb, (VIDEO_WIDTH, VIDEO_HEIGHT))
 
                 img = Image.fromarray(frame_rgb)
                 imgtk = ImageTk.PhotoImage(image=img)
@@ -368,42 +362,43 @@ class BookScannerGUI:
         self.scanning = True
         self.scan_button.config(state=tk.DISABLED, bg='#cccccc')
         self.status_label.config(text="Scanning...", fg='orange')
+        self.results_count.config(text="")
 
         for widget in self.results_frame.winfo_children():
             widget.destroy()
 
         scanning_label = tk.Label(self.results_frame,
                                  text="Scanning...",
-                                 font=('Arial', 9),
+                                 font=('Arial', 10),
                                  bg='#1e1e1e', fg='orange')
         scanning_label.pack(expand=True)
 
         thread = threading.Thread(target=self._scan_worker)
         thread.daemon = True
         thread.start()
-    
+
     def _scan_worker(self):
         try:
             results = self.scanner.scan_books(self.current_frame)
             self.root.after(0, self._display_results, results)
         except Exception as e:
             self.root.after(0, self._display_error, str(e))
-    
+
     def _display_results(self, results):
         for widget in self.results_frame.winfo_children():
             widget.destroy()
 
         if not results:
             no_books = tk.Label(self.results_frame,
-                               text="No books found\n\nTips:\n- Good lighting\n- Steady camera",
-                               font=('Arial', 8),
-                               bg='#1e1e1e', fg='#888888',
-                               justify=tk.LEFT)
-            no_books.pack(pady=10)
+                               text="No books detected - ensure good lighting and steady camera",
+                               font=('Arial', 10),
+                               bg='#1e1e1e', fg='#888888')
+            no_books.pack(expand=True)
             self.status_label.config(text="No books", fg='orange')
+            self.results_count.config(text="")
         else:
-            canvas = tk.Canvas(self.results_frame, bg='#1e1e1e', highlightthickness=0)
-            scrollbar = tk.Scrollbar(self.results_frame, orient="vertical", command=canvas.yview)
+            canvas = tk.Canvas(self.results_frame, bg='#1e1e1e', highlightthickness=0, height=70)
+            scrollbar = tk.Scrollbar(self.results_frame, orient="horizontal", command=canvas.xview)
             scrollable_frame = tk.Frame(canvas, bg='#1e1e1e')
 
             scrollable_frame.bind(
@@ -412,50 +407,50 @@ class BookScannerGUI:
             )
 
             canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
-            canvas.configure(yscrollcommand=scrollbar.set)
+            canvas.configure(xscrollcommand=scrollbar.set)
 
             for book in results:
                 book_frame = tk.Frame(scrollable_frame, bg='#2d2d2d', relief=tk.RAISED, bd=1)
-                book_frame.pack(fill=tk.X, padx=2, pady=2)
+                book_frame.pack(side=tk.LEFT, padx=3, pady=2, fill=tk.Y)
 
-                position_text = f"#{book['position']}"
-
-                pos_label = tk.Label(book_frame, text=position_text,
+                pos_label = tk.Label(book_frame, text=f"#{book['position']}",
                                     font=('Arial', 8, 'bold'),
                                     bg='#4CAF50', fg='white',
-                                    padx=3, pady=1)
-                pos_label.pack(anchor=tk.W, padx=3, pady=(2, 0))
+                                    padx=4, pady=1)
+                pos_label.pack(anchor=tk.W, padx=3, pady=(3, 0))
 
                 title_label = tk.Label(book_frame, text=book.get('title', 'Unknown'),
-                                      font=('Arial', 8, 'bold'),
+                                      font=('Arial', 9, 'bold'),
                                       bg='#2d2d2d', fg='white',
-                                      wraplength=170, justify=tk.LEFT)
+                                      wraplength=180, justify=tk.LEFT)
                 title_label.pack(anchor=tk.W, padx=5, pady=(2, 0))
 
                 author_label = tk.Label(book_frame, text=f"by {book.get('author_full', 'Unknown')}",
-                                       font=('Arial', 7),
+                                       font=('Arial', 8),
                                        bg='#2d2d2d', fg='#cccccc')
-                author_label.pack(anchor=tk.W, padx=5, pady=(0, 2))
+                author_label.pack(anchor=tk.W, padx=5, pady=(0, 3))
 
-            canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-            scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+            scrollbar.pack(side=tk.BOTTOM, fill=tk.X)
+            canvas.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
-            self.status_label.config(text=f"Found {len(results)}", fg='#4CAF50')
+            self.status_label.config(text="Ready", fg='#4CAF50')
+            self.results_count.config(text=f"Found {len(results)}")
 
         self.scanning = False
         self.scan_button.config(state=tk.NORMAL, bg='#4CAF50')
-    
+
     def _display_error(self, error_msg):
         for widget in self.results_frame.winfo_children():
             widget.destroy()
 
         error_label = tk.Label(self.results_frame,
-                              text=f"Error:\n{error_msg}",
-                              font=('Arial', 8),
+                              text=f"Error: {error_msg}",
+                              font=('Arial', 10),
                               bg='#1e1e1e', fg='#ff5555')
-        error_label.pack(pady=10)
+        error_label.pack(expand=True)
 
         self.status_label.config(text="Failed", fg='red')
+        self.results_count.config(text="")
         self.scanning = False
         self.scan_button.config(state=tk.NORMAL, bg='#4CAF50')
 
