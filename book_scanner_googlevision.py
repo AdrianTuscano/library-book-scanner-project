@@ -500,7 +500,17 @@ class BookScannerGUI:
 
 
 def main():
-    root = tk.Tk()
+    if os.name != 'nt' and not os.environ.get('DISPLAY'):
+        raise SystemExit(
+            "This application needs a graphical display for Tkinter. "
+            "Set up X forwarding, run it from a desktop session, or set DISPLAY before launching."
+        )
+
+    try:
+        root = tk.Tk()
+    except tk.TclError as exc:
+        raise SystemExit(f"Unable to start the Tkinter GUI: {exc}") from exc
+
     app = BookScannerGUI(root)
     root.mainloop()
 
