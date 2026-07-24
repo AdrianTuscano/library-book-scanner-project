@@ -16,9 +16,35 @@ try:
 except ImportError:
     PIGPIO_AVAILABLE = False
 
-CREDENTIALS_PATH = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS', '')
-if not CREDENTIALS_PATH:
-    CREDENTIALS_PATH = os.environ.get('GOOGLE_VISION_CREDENTIALS', '')
+def setup_google_credentials():
+    """
+    Resolves and sets GOOGLE_APPLICATION_CREDENTIALS in os.environ.
+    Searches env vars, local project directory, script directory, and home directory for service account JSON files.
+    """
+    cred_path = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS') or os.environ.get('GOOGLE_VISION_CREDENTIALS')
+    if cred_path and os.path.exists(cred_path):
+        os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = cred_path
+        return cred_path
+
+    search_dirs = [
+        os.getcwd(),
+        os.path.dirname(os.path.abspath(__file__)),
+        os.path.expanduser('~')
+    ]
+
+    for d in search_dirs:
+        if not os.path.exists(d):
+            continue
+        for name in ['credentials.json', 'google_credentials.json', 'service_account.json', 'vision_key.json', 'key.json']:
+            full_path = os.path.join(d, name)
+            if os.path.exists(full_path):
+                os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = full_path
+                return full_path
+
+    return os.environ.get('GOOGLE_APPLICATION_CREDENTIALS', '')
+
+
+CREDENTIALS_PATH = setup_google_credentials()
 
 SERVO_PIN_1 = 14
 SERVO_PIN_2 = 2
@@ -80,9 +106,21 @@ class BookScanner:
     NOISE_WORDS = frozenset({'press', 'books', 'publishing', 'inc', 'ltd', 'co', 'e'})
 
     def __init__(self):
-        if not os.environ.get('GOOGLE_APPLICATION_CREDENTIALS'):
-            raise Exception("GOOGLE_APPLICATION_CREDENTIALS not set!")
-        self.vision_client = vision.ImageAnnotatorClient()
+        cred_path = setup_google_credentials()
+        try:
+            if cred_path and os.path.exists(cred_path):
+                self.vision_client = vision.ImageAnnotatorClient.from_service_account_json(cred_path)
+            else:
+                self.vision_client = vision.ImageAnnotatorClient()
+        except Exception as e:
+            err_msg = (
+                f"Failed to initialize Google Vision Client: {e}.\n"
+                "Please set GOOGLE_APPLICATION_CREDENTIALS environment variable or "
+                "place your service account JSON key in the project directory."
+            )
+            print(f"[ERROR] {err_msg}")
+            raise Exception(err_msg) from e
+
         self._session = requests.Session()
 
     def _extract_book_info(self, doc, call_number, confidence):
@@ -135,25 +173,37 @@ class BookScanner:
         return None
     
     def detect_text_vision(self, image_frame):
+        if image_frame is None or image_frame.size == 0:
+            raise ValueError("No valid camera frame available to scan.")
+
         success, encoded_image = cv2.imencode('.jpg', image_frame)
         if not success:
-            return None
+            raise ValueError("Failed to encode camera frame into JPEG image format.")
 
         image = vision.Image(content=encoded_image.tobytes())
 
         try:
             response = self.vision_client.text_detection(image=image)
-            if response.error.message or not response.text_annotations:
-                return None
-            return {
-                'full_text': response.text_annotations[0].description,
-                'text_annotations': response.text_annotations[1:]
-            }
-        except Exception:
+        except Exception as e:
+            print(f"[ERROR] Google Vision API call failed: {e}")
+            raise Exception(f"Google Vision API Error: {e}") from e
+
+        if response.error.message:
+            print(f"[ERROR] Google Vision API response error: {response.error.message}")
+            raise Exception(f"Google Vision API Error: {response.error.message}")
+
+        if not response.text_annotations:
             return None
+
+        return {
+            'full_text': response.text_annotations[0].description,
+            'text_annotations': response.text_annotations[1:]
+        }
 
     def get_text_center_x(self, annotation):
         vertices = annotation.bounding_poly.vertices
+        if not vertices:
+            return 0
         return sum(v.x for v in vertices) / len(vertices)
 
     def cluster_books_by_gap(self, text_annotations, gap_threshold=20):
